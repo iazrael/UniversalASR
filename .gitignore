@@ -40,4 +40,3 @@ coverage/
 test/fixtures/*.pcm
 test/fixtures/*.wav
 !test/fixtures/.gitkeep
-test/data/*
