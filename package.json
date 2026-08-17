@@ -10,7 +10,8 @@
     "start": "node dist/server.js",
     "test:client": "tsx test/mock-client.ts",
     "test:omlx": "tsx test/test-omlx-e2e.ts",
-    "test:omlx:full": "tsx test/test-omlx-full-audio.ts"
+    "test:omlx:full": "tsx test/test-omlx-full-audio.ts",
+    "test:omlx:vad": "tsx test/test-omlx-vad-e2e.ts"
   },
   "keywords": [
     "asr",

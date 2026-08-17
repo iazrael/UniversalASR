@@ -1,5 +1,6 @@
 import { BaseASRProvider, ProviderStartConfig } from '../base.provider.js';
 import { config } from '../../config/index.js';
+import { LightweightVAD } from '../../core/vad.js';
 import WebSocket from 'ws';
 
 export interface OmlxProviderOptions {
@@ -68,8 +69,16 @@ export class OmlxASRProvider extends BaseASRProvider {
   private startConfig: ProviderStartConfig | null = null;
   private isDestroyed = false;
   private isStarted = false;
-  private audioChunks: Buffer[] = [];
   private totalAudioBytes = 0;
+
+  // VAD 智能断句引擎
+  private vad: LightweightVAD | null = null;
+  private sentenceIndex = 1;
+  private pendingTranscriptions: Set<Promise<void>> = new Set();
+
+  // 如果禁用 VAD，回退到全量音频缓存
+  private enableVad: boolean = true;
+  private rawAudioChunks: Buffer[] = [];
 
   // 如果启用 WebSocket realtime
   private ws: WebSocket | null = null;
@@ -95,8 +104,13 @@ export class OmlxASRProvider extends BaseASRProvider {
     this.startConfig = startConfig;
     this.isDestroyed = false;
     this.isStarted = false;
-    this.audioChunks = [];
     this.totalAudioBytes = 0;
+    this.sentenceIndex = 1;
+    this.pendingTranscriptions.clear();
+    this.rawAudioChunks = [];
+
+    // 判断是否启用 VAD 智能切句（默认开启）
+    this.enableVad = startConfig.options?.custom_params?.enable_vad ?? true;
 
     // 如果配置指定了优先尝试 WebSocket Realtime (如配合 Whisper/Voxtral)
     if (this.preferRealtimeWs) {
@@ -104,14 +118,41 @@ export class OmlxASRProvider extends BaseASRProvider {
         await this.startRealtimeWs(startConfig);
         return;
       } catch (err: any) {
-        // 如果后端提示不支持 realtime（如 Qwen3-ASR），平滑降级为音频缓冲与 SSE 转写
+        // 如果后端提示不支持 realtime（如 Qwen3-ASR），平滑降级为 VAD / SSE 转写
         this.isUsingRealtimeWs = false;
       }
     }
 
-    // 默认模式：音频流缓冲并在 stop 时通过 SSE 流式转写下发
+    // 初始化轻量级 VAD 引擎
+    if (this.enableVad) {
+      const sampleRate = startConfig.audioFormat.sample_rate || 16000;
+      // 客户端 options 中 max_sentence_silence (默认 600ms)
+      const silenceMs = startConfig.options?.max_sentence_silence ?? 600;
+      const silenceEndFrames = Math.max(10, Math.round(silenceMs / 20));
+      const energyThresholdDb = startConfig.options?.custom_params?.vad_energy_threshold ?? -38;
+
+      this.vad = new LightweightVAD(
+        {
+          sampleRate,
+          frameSizeMs: 20,
+          energyThresholdDb,
+          speechStartFrames: 5,
+          silenceEndFrames,
+          preSpeechMs: 200,
+          maxSentenceMs: 15000,
+        },
+        {
+          onSentenceEnd: (sentencePcm: Buffer, durationMs: number) => {
+            this.handleVadSentenceEnd(sentencePcm, durationMs);
+          },
+          onSpeechStart: () => {
+            // 可在此处触发 vad 说话开始通知
+          },
+        }
+      );
+    }
+
     this.isStarted = true;
-    // 触发就绪事件，通知网关准备好接收音频
     setTimeout(() => {
       if (!this.isDestroyed) {
         this.emit('ready');
@@ -119,8 +160,68 @@ export class OmlxASRProvider extends BaseASRProvider {
     }, 10);
   }
 
+  // 异步句子转写队列 (保证单会话顺序执行与后端压力控制)
+  private sentenceQueue: { sentenceId: number; wavBuffer: Buffer; durationMs: number }[] = [];
+  private isProcessingQueue = false;
+  private queueCompletionPromise: Promise<void> | null = null;
+  private queueCompletionResolver: (() => void) | null = null;
+
   /**
-   * 启动 WebSocket 实时双向流 (用于 Whisper / Voxtral 等原生支持推流的模型)
+   * 处理 VAD 切出的单句音频
+   */
+  private handleVadSentenceEnd(sentencePcm: Buffer, durationMs: number): void {
+    if (this.isDestroyed || sentencePcm.length === 0) return;
+
+    const sentenceId = this.sentenceIndex++;
+    const sampleRate = this.startConfig?.audioFormat.sample_rate || 16000;
+    const channels = this.startConfig?.audioFormat.channels || 1;
+    const bitDepth = this.startConfig?.audioFormat.bit_depth || 16;
+
+    const wavBuffer = pcmToWav(sentencePcm, sampleRate, channels, bitDepth);
+    this.sentenceQueue.push({ sentenceId, wavBuffer, durationMs });
+    this.triggerProcessQueue();
+  }
+
+  /**
+   * 触发队列处理
+   */
+  private triggerProcessQueue(): void {
+    if (this.isProcessingQueue || this.sentenceQueue.length === 0) return;
+    this.isProcessingQueue = true;
+
+    (async () => {
+      while (this.sentenceQueue.length > 0 && !this.isDestroyed) {
+        const item = this.sentenceQueue.shift();
+        if (!item) break;
+
+        // 尝试执行，失败时进行一次自动重试
+        let retry = 2;
+        while (retry > 0 && !this.isDestroyed) {
+          try {
+            await this.transcribeSentenceSSE(item.wavBuffer, item.sentenceId, item.durationMs);
+            break;
+          } catch (err: any) {
+            retry--;
+            if (retry === 0) {
+              this.emit('error', err);
+            } else {
+              // 稍候 300ms 重试
+              await new Promise((r) => setTimeout(r, 300));
+            }
+          }
+        }
+      }
+
+      this.isProcessingQueue = false;
+      if (this.sentenceQueue.length === 0 && this.queueCompletionResolver) {
+        this.queueCompletionResolver();
+        this.queueCompletionResolver = null;
+      }
+    })();
+  }
+
+  /**
+   * 启动 WebSocket 实时双向流
    */
   private async startRealtimeWs(startConfig: ProviderStartConfig): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -203,15 +304,19 @@ export class OmlxASRProvider extends BaseASRProvider {
   public sendAudio(chunk: Buffer): void {
     if (this.isDestroyed) return;
 
+    this.totalAudioBytes += chunk.length;
+
     if (this.isUsingRealtimeWs && this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(chunk);
-      this.totalAudioBytes += chunk.length;
       return;
     }
 
-    // 缓存 PCM 音频数据
-    this.audioChunks.push(chunk);
-    this.totalAudioBytes += chunk.length;
+    if (this.enableVad && this.vad) {
+      // 送入 VAD 进行实时帧切分与状态迁移
+      this.vad.processChunk(chunk);
+    } else {
+      this.rawAudioChunks.push(chunk);
+    }
   }
 
   /**
@@ -226,7 +331,7 @@ export class OmlxASRProvider extends BaseASRProvider {
   }
 
   /**
-   * 停止识别，开始执行最终转写
+   * 停止识别，冲刷未完结音频并等待全部句子转写完成
    */
   public async stop(): Promise<void> {
     if (this.isDestroyed) return;
@@ -236,41 +341,48 @@ export class OmlxASRProvider extends BaseASRProvider {
       return;
     }
 
-    // 检查是否有音频数据
-    if (this.audioChunks.length === 0) {
-      this.emit('transcript', { text: '', is_final: true });
-      this.emit('completed', { durationMs: 0 });
-      return;
+    if (this.enableVad && this.vad) {
+      // 冲刷最后一句话
+      this.vad.flush();
+    } else if (this.rawAudioChunks.length > 0) {
+      // 非 VAD 模式下，整段转写
+      const rawPcm = Buffer.concat(this.rawAudioChunks);
+      const sampleRate = this.startConfig?.audioFormat.sample_rate || 16000;
+      const channels = this.startConfig?.audioFormat.channels || 1;
+      const bitDepth = this.startConfig?.audioFormat.bit_depth || 16;
+      const wavBuffer = pcmToWav(rawPcm, sampleRate, channels, bitDepth);
+      this.sentenceQueue.push({ sentenceId: 1, wavBuffer, durationMs: this.calculateAudioDurationMs() });
+      this.triggerProcessQueue();
     }
 
-    // 将收到的 PCM 拼接并封装为 WAV 格式
-    const rawPcm = Buffer.concat(this.audioChunks);
-    const sampleRate = this.startConfig?.audioFormat.sample_rate || 16000;
-    const channels = this.startConfig?.audioFormat.channels || 1;
-    const bitDepth = this.startConfig?.audioFormat.bit_depth || 16;
-
-    let audioWavBuffer: Buffer;
-    const codec = (this.startConfig?.audioFormat.codec || 'pcm').toLowerCase();
-
-    if (codec === 'wav') {
-      audioWavBuffer = rawPcm;
-    } else {
-      audioWavBuffer = pcmToWav(rawPcm, sampleRate, channels, bitDepth);
+    // 等待所有队列中的句子转写请求全部完成
+    if (this.sentenceQueue.length > 0 || this.isProcessingQueue) {
+      await new Promise<void>((resolve) => {
+        this.queueCompletionResolver = resolve;
+      });
     }
 
-    // 发起 HTTP /v1/audio/transcriptions 请求 (开启 stream=true 获得 SSE 逐词输出)
-    await this.transcribeWithSSE(audioWavBuffer);
+    if (!this.isDestroyed) {
+      this.emit('completed', {
+        durationMs: this.calculateAudioDurationMs(),
+      });
+      this.destroy();
+    }
   }
 
   /**
-   * 发起 SSE 转写请求
+   * 发起单句 SSE 转写请求
    */
-  private async transcribeWithSSE(wavBuffer: Buffer): Promise<void> {
+  private async transcribeSentenceSSE(
+    wavBuffer: Buffer,
+    sentenceId: number,
+    durationMs: number
+  ): Promise<void> {
     const endpoint = `${this.baseUrl}/v1/audio/transcriptions`;
     const formData = new FormData();
     const blob = new Blob([wavBuffer], { type: 'audio/wav' });
 
-    formData.append('file', blob, 'recording.wav');
+    formData.append('file', blob, `sentence_${sentenceId}.wav`);
     formData.append('model', this.model);
     formData.append('stream', 'true');
 
@@ -327,20 +439,21 @@ export class OmlxASRProvider extends BaseASRProvider {
             if (eventData.type === 'transcript.text.delta') {
               accumulatedText += eventData.delta || '';
               this.emit('transcript', {
+                sentence_id: sentenceId,
                 text: accumulatedText,
                 is_final: false,
               });
             } else if (eventData.type === 'transcript.text.done') {
               doneReceived = true;
               const finalText = eventData.text || accumulatedText;
-              this.emit('transcript', {
-                text: finalText,
-                is_final: true,
-              });
-              this.emit('completed', {
-                durationMs: this.calculateAudioDurationMs(),
-                raw: eventData,
-              });
+              // 忽略纯空白无意义切片
+              if (finalText.trim()) {
+                this.emit('transcript', {
+                  sentence_id: sentenceId,
+                  text: finalText.trim(),
+                  is_final: true,
+                });
+              }
             }
           } catch {
             // 忽略非 json 行
@@ -348,24 +461,18 @@ export class OmlxASRProvider extends BaseASRProvider {
         }
       }
 
-      // 如果流结束但没有收到 transcript.text.done，发出最终结果
-      if (!doneReceived && !this.isDestroyed) {
-        if (accumulatedText) {
-          this.emit('transcript', {
-            text: accumulatedText,
-            is_final: true,
-          });
-        }
-        this.emit('completed', {
-          durationMs: this.calculateAudioDurationMs(),
+      // 如果流结束但没有收到 transcript.text.done，发出最终定稿
+      if (!doneReceived && !this.isDestroyed && accumulatedText.trim()) {
+        this.emit('transcript', {
+          sentence_id: sentenceId,
+          text: accumulatedText.trim(),
+          is_final: true,
         });
       }
     } catch (err: any) {
       if (!this.isDestroyed) {
         this.emit('error', err);
       }
-    } finally {
-      this.destroy();
     }
   }
 
@@ -375,7 +482,15 @@ export class OmlxASRProvider extends BaseASRProvider {
   public destroy(): void {
     if (this.isDestroyed) return;
     this.isDestroyed = true;
-    this.audioChunks = [];
+    this.rawAudioChunks = [];
+    this.sentenceQueue = [];
+    this.isProcessingQueue = false;
+    if (this.queueCompletionResolver) {
+      this.queueCompletionResolver();
+      this.queueCompletionResolver = null;
+    }
+    this.vad?.reset();
+    this.vad = null;
 
     if (this.ws) {
       this.ws.removeAllListeners();
