@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+
+# Production build output
+dist/
+
+# Environment and sensitive keys
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# IDE and Editor Files
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Testing & Coverage
+coverage/
+.nyc_output/
+
+# Temporary audio test outputs
+test/fixtures/*.pcm
+test/fixtures/*.wav
+!test/fixtures/.gitkeep
