@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="description" content="Universal Real-time ASR Service - 跨厂商多模型实时语音识别控制台">
+  <title>Universal ASR 实时语音转写</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="app-container" id="app">
+    <!-- 顶部状态栏与标题 -->
+    <header class="app-header">
+      <div class="brand-wrapper">
+        <div class="brand-icon" id="brand-icon">🎙️</div>
+        <div class="brand-info">
+          <h1 id="app-title">Universal ASR</h1>
+          <div class="brand-status">
+            <span class="status-dot" id="status-dot"></span>
+            <span id="status-text">就绪 (空闲)</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <button class="icon-btn" id="btn-toggle-settings" title="参数配置" aria-label="参数配置">⚙️</button>
+        <button class="icon-btn" id="btn-clear" title="清空文本" aria-label="清空文本">🗑️</button>
+        <button class="icon-btn" id="btn-copy-all" title="复制全文" aria-label="复制全文">📋</button>
+      </div>
+    </header>
+
+    <!-- 可折叠设置面板 -->
+    <section class="settings-panel collapsed" id="settings-panel">
+      <!-- 引擎选择 -->
+      <div class="setting-item">
+        <label>ASR 引擎提供商</label>
+        <div class="segmented-control" id="provider-selector">
+          <div class="segmented-option selected omlx-badge" data-provider="omlx" id="opt-omlx">
+            ⚡ oMLX (Qwen3-ASR)
+          </div>
+          <div class="segmented-option" data-provider="aliyun" id="opt-aliyun">
+            ☁️ 阿里云 (Paraformer)
+          </div>
+        </div>
+      </div>
+
+      <!-- 参数微调网格 -->
+      <div class="settings-grid">
+        <!-- VAD 拖尾切句阈值 -->
+        <div class="setting-item">
+          <label for="silence-slider">
+            <span>VAD 停顿切句拖尾</span>
+            <span class="value-badge" id="silence-val-text">600ms</span>
+          </label>
+          <div class="range-slider-wrap">
+            <input type="range" id="silence-slider" class="range-slider" min="200" max="2000" step="50" value="600">
+          </div>
+        </div>
+
+        <!-- 识别语言 -->
+        <div class="setting-item">
+          <label for="lang-select">识别语种</label>
+          <select id="lang-select" style="padding: 6px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); background: var(--bg-surface); color: var(--text-primary); font-size: 13px;">
+            <option value="zh" selected>中文 (普通话)</option>
+            <option value="en">English (英文)</option>
+            <option value="ja">日本語 (日文)</option>
+            <option value="yue">粤语 (Cantonese)</option>
+          </select>
+        </div>
+      </div>
+    </section>
+
+    <!-- 实时转写结果展示区 -->
+    <main class="transcript-viewport" id="transcript-viewport">
+      <!-- 空状态 -->
+      <div class="empty-state" id="empty-state">
+        <div class="empty-icon">🎙️</div>
+        <h3>点击下方麦克风开始说话</h3>
+        <p>支持边说边出字，停顿自动切句定稿。可自由切换 oMLX 私有化模型与阿里云百炼 ASR 引擎。</p>
+      </div>
+
+      <!-- 动态渲染的已定稿句子卡片列表 -->
+      <div id="sentence-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
+
+      <!-- 当前正在实时说话/转写中的动态气泡 -->
+      <div class="live-speech-bubble" id="live-speech-bubble" style="display: none;">
+        <div class="bubble-meta">
+          <span class="sentence-tag" id="live-bubble-tag">句 #-- 实时中</span>
+          <span id="live-bubble-provider">oMLX</span>
+        </div>
+        <div class="sentence-text">
+          <span id="live-text"></span><span class="cursor-typing"></span>
+        </div>
+      </div>
+    </main>
+
+    <!-- 底部控制面板 -->
+    <footer class="bottom-bar">
+      <!-- 实时音频波形 Canvas -->
+      <canvas class="waveform-canvas" id="waveform-canvas"></canvas>
+
+      <!-- 录音控制栏 -->
+      <div class="record-controls">
+        <div class="stats-info">
+          <span id="timer-text">00:00</span>
+          <span id="word-count-text">0 字 / 0 句</span>
+        </div>
+
+        <!-- 大麦克风按钮 -->
+        <div class="mic-btn-wrapper">
+          <button class="record-btn" id="record-btn" aria-label="点击录音">
+            <span id="btn-icon">🎙️</span>
+          </button>
+          <div class="record-pulse-ring"></div>
+        </div>
+
+        <div class="action-tools">
+          <button class="icon-btn" id="btn-test-demo" title="使用示例音频测试" style="font-size: 13px; width: auto; padding: 0 10px;">
+            🧪 示例评测
+          </button>
+        </div>
+      </div>
+    </footer>
+
+    <!-- 全局 Toast 提示 -->
+    <div class="toast-msg" id="toast-msg">已复制全文到剪贴板</div>
+  </div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

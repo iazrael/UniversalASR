@@ -1,11 +1,18 @@
 import Fastify from 'fastify';
 import websocket from '@fastify/websocket';
 import cors from '@fastify/cors';
+import fastifyStatic from '@fastify/static';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { config } from './config/index.js';
 import { AuthService } from './auth/auth.service.js';
 import { ASRSession } from './core/session.js';
 import { ASRErrorCode } from './types/protocol.js';
 import { ASRProviderFactory } from './providers/factory.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const publicDir = path.join(__dirname, '../public');
 
 const app = Fastify({
   logger: {
@@ -26,6 +33,10 @@ const app = Fastify({
 
 // 注册插件
 await app.register(cors, { origin: '*' });
+await app.register(fastifyStatic, {
+  root: publicDir,
+  prefix: '/',
+});
 await app.register(websocket, {
   options: {
     maxPayload: 1024 * 1024 * 5, // 5MB 最大包限制

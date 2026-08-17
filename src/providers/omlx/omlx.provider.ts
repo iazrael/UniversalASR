@@ -384,7 +384,7 @@ export class OmlxASRProvider extends BaseASRProvider {
   ): Promise<void> {
     const endpoint = `${this.baseUrl}/v1/audio/transcriptions`;
     const formData = new FormData();
-    const blob = new Blob([wavBuffer], { type: 'audio/wav' });
+    const blob = new Blob([new Uint8Array(wavBuffer)], { type: 'audio/wav' });
 
     formData.append('file', blob, `sentence_${sentenceId}.wav`);
     formData.append('model', this.model);
