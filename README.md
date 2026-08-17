@@ -44,7 +44,10 @@ AUTH_TOKENS=default-client-token,test-token-123
 # 阿里云 DashScope 配置
 # 前往获取: https://bailian.console.aliyun.com/
 DASHSCOPE_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+# 可选：百炼业务空间 ID（若配置将优先使用北京专属 MaaS 域名加速）
+DASHSCOPE_WORKSPACE_ID=
 DASHSCOPE_MODEL=paraformer-realtime-v2
+DASHSCOPE_WS_URL=wss://dashscope.aliyuncs.com/api-ws/v1/inference
 ```
 
 ### 3. 启动开发服务

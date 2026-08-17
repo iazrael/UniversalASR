@@ -17,8 +17,9 @@ const envSchema = z.object({
 
   // 阿里云 DashScope / Paraformer 配置
   DASHSCOPE_API_KEY: z.string().optional().default(''),
+  DASHSCOPE_WORKSPACE_ID: z.string().optional().default(''),
   DASHSCOPE_MODEL: z.string().default('paraformer-realtime-v2'),
-  DASHSCOPE_WS_URL: z.string().default('wss://dashscope.aliyuncs.com/api-v1/services/audio/asr/transcription'),
+  DASHSCOPE_WS_URL: z.string().default('wss://dashscope.aliyuncs.com/api-ws/v1/inference'),
 
   // 会话空闲超时时间（毫秒，默认 60 秒无音频/交互则自动释放）
   SESSION_IDLE_TIMEOUT_MS: z.coerce.number().default(60000),

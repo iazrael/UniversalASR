@@ -215,9 +215,17 @@ export abstract class BaseASRProvider extends EventEmitter {
    - 协议：WebSocket (`wss://nls-gateway-cn-shanghai.aliyuncs.com/ws/v1`)
    - 鉴权机制：由 `AccessKeyId/Secret` 生成临时 Token（默认 24 小时过期，内置 Token 自动缓存与刷新模块）。
    - 帧格式：4 字节二进制头部 + JSON 指令帧 / 纯二进制音频帧。
-2. **百炼大模型平台 (DashScope - Paraformer / SenseVoice)**：
-   - 协议：WebSocket API (`wss://dashscope.aliyuncs.com/api-v1/services/audio/asr/transcription`)
-   - 鉴权机制：静态 `DASHSCOPE_API_KEY`。
+2. **百炼大模型平台 (DashScope - Paraformer-realtime-v2)**：
+   - 协议：官方 WebSocket API (`wss://dashscope.aliyuncs.com/api-ws/v1/inference` 或专属空间 `wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference`)
+   - 鉴权机制：静态 `Authorization: Bearer <API_KEY>`。
+   - 核心指令：
+     - `run-task`：传递模型名称、音频格式（pcm/wav/opus/aac等）、采样率、热词表 ID、语气词过滤、语义断句与标点等丰富参数。
+     - `finish-task`：通知厂商推流结束。
+   - 核心事件：
+     - `task-started`：会话准备就绪。
+     - `result-generated`：流式返回识别结果（包含 `sentence_end`、词级时间戳 `words`、标点 `punctuation`、情感标签 `emo_tag` 等）。
+     - `task-finished`：会话完成并返回计费时长。
+     - `task-failed`：会话异常中断。
 
 ---
 

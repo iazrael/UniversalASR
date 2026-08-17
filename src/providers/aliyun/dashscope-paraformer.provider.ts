@@ -5,6 +5,7 @@ import { config } from '../../config/index.js';
 
 export interface DashScopeProviderOptions {
   apiKey?: string;
+  workspaceId?: string;
   model?: string;
   wsUrl?: string;
 }
@@ -15,18 +16,27 @@ export class DashScopeParaformerProvider extends BaseASRProvider {
   private ws: WebSocket | null = null;
   private taskId: string = '';
   private apiKey: string;
+  private workspaceId: string;
   private model: string;
   private wsUrl: string;
 
   private isStarted = false;
   private isDestroyed = false;
   private audioBufferQueue: Buffer[] = [];
+  private lastRecordedDurationMs: number = 0;
 
   constructor(options?: DashScopeProviderOptions) {
     super();
     this.apiKey = options?.apiKey || config.DASHSCOPE_API_KEY;
+    this.workspaceId = options?.workspaceId || config.DASHSCOPE_WORKSPACE_ID;
     this.model = options?.model || config.DASHSCOPE_MODEL;
-    this.wsUrl = options?.wsUrl || config.DASHSCOPE_WS_URL;
+    
+    // 如果配置了专属 Workspace ID 且使用的是默认公用 URL，自动使用北京专属加速域名
+    if (this.workspaceId && config.DASHSCOPE_WS_URL === 'wss://dashscope.aliyuncs.com/api-ws/v1/inference') {
+      this.wsUrl = `wss://${this.workspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference`;
+    } else {
+      this.wsUrl = options?.wsUrl || config.DASHSCOPE_WS_URL;
+    }
   }
 
   /**
@@ -34,34 +44,39 @@ export class DashScopeParaformerProvider extends BaseASRProvider {
    */
   public async start(startConfig: ProviderStartConfig): Promise<void> {
     if (!this.apiKey) {
-      throw new Error('DASHSCOPE_API_KEY 未配置，请在环境变量或启动参数中设置');
+      throw new Error('DASHSCOPE_API_KEY 未配置，请在环境变量或配置文件中设置');
     }
 
-    this.taskId = uuidv4().replace(/-/g, '');
+    // 官方规范要求 task_id 必须为标准 UUID 格式
+    this.taskId = uuidv4();
     this.isStarted = false;
     this.isDestroyed = false;
     this.audioBufferQueue = [];
+    this.lastRecordedDurationMs = 0;
 
     return new Promise((resolve, reject) => {
       let isResolved = false;
 
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${this.apiKey}`,
+        'user-agent': 'universal-asr-service/1.0.0',
+      };
+
+      if (this.workspaceId) {
+        headers['X-DashScope-WorkSpace'] = this.workspaceId;
+      }
+
       try {
-        this.ws = new WebSocket(this.wsUrl, {
-          headers: {
-            Authorization: `bearer ${this.apiKey}`,
-            'X-DashScope-DataInspection': 'enable',
-          },
-        });
+        this.ws = new WebSocket(this.wsUrl, { headers });
       } catch (err) {
         return reject(err);
       }
 
       this.ws.on('open', () => {
-        // 连接建立后，向 DashScope 发送 run-task 控制指令
         const sampleRate = startConfig.audioFormat.sample_rate || 16000;
-        let format = startConfig.audioFormat.codec.toLowerCase();
-        if (format === 'pcm') format = 'pcm';
+        let format = (startConfig.audioFormat.codec || 'pcm').toLowerCase();
 
+        // 构造官方标准的 run-task 请求帧
         const runTaskMessage = {
           header: {
             action: 'run-task',
@@ -73,15 +88,20 @@ export class DashScopeParaformerProvider extends BaseASRProvider {
             task: 'asr',
             function: 'recognition',
             model: this.model,
+            input: {},
             parameters: {
               format,
               sample_rate: sampleRate,
               vocabulary_id: startConfig.options?.vocabulary_id,
               disfluency_removal_enabled: startConfig.options?.disfluency_removal ?? false,
               language_hints: startConfig.options?.language ? [startConfig.options.language] : undefined,
+              semantic_punctuation_enabled: startConfig.options?.semantic_punctuation,
+              max_sentence_silence: startConfig.options?.max_sentence_silence,
+              multi_threshold_mode_enabled: startConfig.options?.multi_threshold_mode,
+              punctuation_prediction_enabled: startConfig.options?.punctuation ?? true,
+              inverse_text_normalization_enabled: startConfig.options?.inverse_text_normalization ?? true,
               ...(startConfig.options?.custom_params || {}),
             },
-            input: {},
           },
         };
 
@@ -101,33 +121,50 @@ export class DashScopeParaformerProvider extends BaseASRProvider {
                 resolve();
               }
               this.emit('ready');
-              // 冲刷在 task-started 之前接收到的缓存音频分片
+              // 冲刷握手期间缓存的音频数据帧
               this.flushQueuedAudio();
               break;
 
             case 'result-generated': {
               const sentence = data?.payload?.output?.sentence;
-              if (sentence) {
-                this.emit('transcript', {
-                  text: sentence.text || '',
-                  is_final: Boolean(sentence.fixed),
-                  sentence_id: sentence.sentence_id,
-                  begin_time: sentence.begin_time,
-                  end_time: sentence.end_time,
-                  words: sentence.words?.map((w: any) => ({
-                    text: w.text,
-                    begin_time: w.begin_time,
-                    end_time: w.end_time,
-                  })),
-                });
+              if (!sentence) break;
+
+              // 忽略内部心跳包
+              if (sentence.heartbeat === true) break;
+
+              const isFinal = Boolean(sentence.sentence_end);
+
+              // 提取计费时长
+              if (typeof data?.payload?.usage?.duration === 'number') {
+                this.lastRecordedDurationMs = data.payload.usage.duration * 1000;
               }
+
+              this.emit('transcript', {
+                text: sentence.text || '',
+                is_final: isFinal,
+                begin_time: sentence.begin_time,
+                end_time: sentence.end_time,
+                emo_tag: sentence.emo_tag,
+                emo_confidence: sentence.emo_confidence,
+                words: sentence.words?.map((w: any) => ({
+                  text: w.text,
+                  begin_time: w.begin_time,
+                  end_time: w.end_time,
+                  punctuation: w.punctuation || '',
+                })),
+              });
               break;
             }
 
             case 'task-finished': {
               const durationSec = data?.payload?.usage?.duration;
+              const durationMs =
+                typeof durationSec === 'number'
+                  ? durationSec * 1000
+                  : this.lastRecordedDurationMs || undefined;
+
               const payload: ProviderCompletedPayload = {
-                durationMs: typeof durationSec === 'number' ? durationSec * 1000 : undefined,
+                durationMs,
                 raw: data,
               };
               this.emit('completed', payload);
@@ -136,8 +173,10 @@ export class DashScopeParaformerProvider extends BaseASRProvider {
             }
 
             case 'task-failed': {
+              const errorCode = data?.header?.error_code || 'UNKNOWN_ERROR';
               const errorMsg = data?.header?.error_message || 'DashScope task failed';
-              const error = new Error(`DashScope ASR Error: [${data?.header?.error_code || 'UNKNOWN'}] ${errorMsg}`);
+              const error = new Error(`DashScope ASR Error: [${errorCode}] ${errorMsg}`);
+              
               if (!isResolved) {
                 isResolved = true;
                 reject(error);
@@ -150,8 +189,8 @@ export class DashScopeParaformerProvider extends BaseASRProvider {
             default:
               break;
           }
-        } catch (parseErr) {
-          // 忽略非 JSON 异常
+        } catch {
+          // 忽略非标准 JSON 解析错误
         }
       });
 
@@ -178,7 +217,7 @@ export class DashScopeParaformerProvider extends BaseASRProvider {
     }
 
     if (!this.isStarted) {
-      // 若 DashScope 还未返回 task-started，先缓存音频避免首包丢失
+      // 若 DashScope 还未返回 task-started，先入队缓冲以防首包音频丢失
       this.audioBufferQueue.push(chunk);
       return;
     }
@@ -200,14 +239,13 @@ export class DashScopeParaformerProvider extends BaseASRProvider {
   }
 
   /**
-   * 通知 DashScope 完成识别
+   * 通知 DashScope 结束会话
    */
   public async stop(): Promise<void> {
     if (this.isDestroyed || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
       return;
     }
 
-    // 先冲刷完毕
     this.flushQueuedAudio();
 
     const finishMessage = {
@@ -225,7 +263,7 @@ export class DashScopeParaformerProvider extends BaseASRProvider {
   }
 
   /**
-   * 销毁连接与清理
+   * 彻底销毁连接与清理资源
    */
   public destroy(): void {
     if (this.isDestroyed) return;
