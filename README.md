@@ -97,7 +97,7 @@ ws://<server_host>:<port>/v1/asr?token=<YOUR_TOKEN>
 ```json
 {
   "action": "start",
-  "provider": "aliyun",
+  "provider": "omlx",
   "audio_format": {
     "codec": "pcm",
     "sample_rate": 16000,
@@ -108,10 +108,28 @@ ws://<server_host>:<port>/v1/asr?token=<YOUR_TOKEN>
     "language": "zh",
     "intermediate_results": true,
     "punctuation": true,
-    "disfluency_removal": false
+    "max_sentence_silence": 600,
+    "custom_params": {
+      "enable_vad": true,
+      "vad_energy_threshold": -38,
+      "vad_pre_speech_ms": 200,
+      "vad_max_sentence_ms": 15000
+    }
   }
 }
 ```
+
+#### ⚙️ ASR 与 VAD 参数详细说明
+
+| 参数字段 | 类型 | 默认值 | 说明与推荐配置 |
+| :--- | :--- | :--- | :--- |
+| `provider` | `string` | `"aliyun"` | ASR 提供商：`"omlx"` / `"qwen3-asr"` / `"aliyun"` |
+| `options.language` | `string` | `"zh"` | 识别语种，支持 `zh` (中文), `en` (英文), `ja`, `ko` 等 |
+| `options.max_sentence_silence` | `number` | `600` | **VAD 停顿切句/拖尾阈值 (ms)**。用户停止说话后，持续静音达到此时间即自动切句转写定稿。推荐值：<br>• **实时交互/语音助手**：`400` ~ `600` ms<br>• **长演讲/会议记录**：`800` ~ `1200` ms |
+| `options.custom_params.enable_vad` | `boolean` | `true` | 是否启用网关端轻量级 VAD 智能切句与边说边出字 |
+| `options.custom_params.vad_energy_threshold` | `number` | `-38` | VAD 声音能量判定门限 (dBFS，范围 `-50` ~ `-25`)。数值越小越灵敏，数值越大越抗嘈杂环境底噪 |
+| `options.custom_params.vad_pre_speech_ms` | `number` | `200` | **前置预缓冲时长 (ms)**。保留说话起始前 200ms 的音频，**彻底避免首辅音/爆破音被吞字** |
+| `options.custom_params.vad_max_sentence_ms` | `number` | `15000` | 单句最大时长保护 (ms)，持续说话超过该时长时强制截断切句，防止长难句造成延迟堆积 |
 
 ### 3. 接收就绪响应 (`started`)
 服务端确认 ASR 引擎已就绪：

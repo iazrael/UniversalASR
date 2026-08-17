@@ -258,3 +258,45 @@ export class LightweightVAD {
    - `maxSentenceMs` 设定 15 秒硬上限，防止内存无限累积与延迟堆积。
 4. **会话结束收尾**：
    - 客户端触发 `stop` 时调用 `flush()`，确保最后一句即使未达静音时长也能被完整提交识别。
+
+---
+
+## 8. 调用方传参规范与 API 指南
+
+客户端建立 WebSocket 连接后，在 `start` 帧的 `options` 中即可定制 VAD 拖尾与切句灵敏度：
+
+### 8.1 示例请求
+
+```json
+{
+  "action": "start",
+  "provider": "omlx",
+  "audio_format": {
+    "codec": "pcm",
+    "sample_rate": 16000,
+    "channels": 1,
+    "bit_depth": 16
+  },
+  "options": {
+    "language": "zh",
+    "max_sentence_silence": 600,
+    "custom_params": {
+      "enable_vad": true,
+      "vad_energy_threshold": -38,
+      "vad_pre_speech_ms": 200,
+      "vad_max_sentence_ms": 15000
+    }
+  }
+}
+```
+
+### 8.2 参数定义与推荐场景
+
+| 字段 | 类型 | 默认值 | 场景与调优建议 |
+| :--- | :--- | :--- | :--- |
+| `options.max_sentence_silence` | `number` | `600` | **VAD 拖尾静音判定阈值 (ms)**。<br>• **智能助手/极速交互**：建议 `400` ~ `600` ms，反应最快；<br>• **会议记录/长演讲**：建议 `800` ~ `1200` ms，保证长难句完整性。 |
+| `options.custom_params.enable_vad` | `boolean` | `true` | 是否启用网关 VAD 自动切句。若为 `false` 则整通录音在 `stop` 时统一转写。 |
+| `options.custom_params.vad_energy_threshold` | `number` | `-38` | **声音门限 (dBFS)**。<br>• 安静室内：`-42` ~ `-38` dBFS（高灵敏度）；<br>• 嘈杂/办公室环境：`-35` ~ `-28` dBFS（防误触发）。 |
+| `options.custom_params.vad_pre_speech_ms` | `number` | `200` | **前置预缓冲时长 (ms)**。保留说话起始前 200ms 音频，彻底解决吞字问题。 |
+| `options.custom_params.vad_max_sentence_ms` | `number` | `15000` | 单句最大时长限制 (ms)，防止滔滔不绝长句造成延迟堆积。 |
+

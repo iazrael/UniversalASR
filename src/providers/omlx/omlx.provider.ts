@@ -126,27 +126,31 @@ export class OmlxASRProvider extends BaseASRProvider {
     // 初始化轻量级 VAD 引擎
     if (this.enableVad) {
       const sampleRate = startConfig.audioFormat.sample_rate || 16000;
-      // 客户端 options 中 max_sentence_silence (默认 600ms)
+      // 客户端 options 中 max_sentence_silence (静音判定拖尾阈值，默认 600ms)
       const silenceMs = startConfig.options?.max_sentence_silence ?? 600;
-      const silenceEndFrames = Math.max(10, Math.round(silenceMs / 20));
+      const silenceEndFrames = Math.max(5, Math.round(silenceMs / 20));
       const energyThresholdDb = startConfig.options?.custom_params?.vad_energy_threshold ?? -38;
+      const preSpeechMs = startConfig.options?.custom_params?.vad_pre_speech_ms ?? 200;
+      const maxSentenceMs = startConfig.options?.custom_params?.vad_max_sentence_ms ?? 15000;
+      const speechStartMs = startConfig.options?.custom_params?.vad_speech_start_ms ?? 100;
+      const speechStartFrames = Math.max(2, Math.round(speechStartMs / 20));
 
       this.vad = new LightweightVAD(
         {
           sampleRate,
           frameSizeMs: 20,
           energyThresholdDb,
-          speechStartFrames: 5,
+          speechStartFrames,
           silenceEndFrames,
-          preSpeechMs: 200,
-          maxSentenceMs: 15000,
+          preSpeechMs,
+          maxSentenceMs,
         },
         {
           onSentenceEnd: (sentencePcm: Buffer, durationMs: number) => {
             this.handleVadSentenceEnd(sentencePcm, durationMs);
           },
           onSpeechStart: () => {
-            // 可在此处触发 vad 说话开始通知
+            // 触发内部或外部语音起始事件
           },
         }
       );

@@ -73,7 +73,7 @@ flowchart TD
 {
   "action": "start",
   "session_id": "req-uuid-123456",
-  "provider": "aliyun",
+  "provider": "omlx",
   "audio_format": {
     "codec": "pcm",
     "sample_rate": 16000,
@@ -84,10 +84,24 @@ flowchart TD
     "language": "zh",
     "intermediate_results": true,
     "punctuation": true,
-    "vocabulary_id": "custom-dict-id"
+    "max_sentence_silence": 600,
+    "vocabulary_id": "custom-dict-id",
+    "custom_params": {
+      "enable_vad": true,
+      "vad_energy_threshold": -38,
+      "vad_pre_speech_ms": 200,
+      "vad_max_sentence_ms": 15000
+    }
   }
 }
 ```
+
+##### 常用 Options 参数说明
+- `max_sentence_silence` (number): **VAD 停顿切句/静音判定拖尾阈值 (ms)**。用户停止说话后，持续静音达到该阈值时自动触发切句定稿（默认 `600`，实时交互推荐 `400~600`，长语音推荐 `800~1200`）。
+- `custom_params.enable_vad` (boolean): 是否开启网关轻量级 VAD 智能分句。
+- `custom_params.vad_energy_threshold` (number): VAD 声音能量判定门限 (dBFS，默认 `-38`)。
+- `custom_params.vad_pre_speech_ms` (number): 前置预缓冲时长 (ms，默认 `200`)，防止句首吞字。
+- `custom_params.vad_max_sentence_ms` (number): 单句最长保护时长 (ms，默认 `15000`)。
 
 #### (2) 发送音频分片 (Binary Frame)
 - 客户端通过 WebSocket Binary Frame 持续发送音频切片（如 PCM 数据）。
