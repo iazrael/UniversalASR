@@ -4,10 +4,11 @@ import path from 'path';
 import { execSync } from 'child_process';
 
 const SERVER_URL = process.env.TEST_SERVER_URL || 'ws://127.0.0.1:8080/v1/asr?token=default-client-token';
+const TEST_PROVIDER = process.env.TEST_PROVIDER || 'omlx';
 const AUDIO_FILE_PATH = process.argv[2] || path.join(process.cwd(), 'test/data/test_audio.m4a');
 const REFERENCE_TEXT_PATH = path.join(process.cwd(), 'test/data/test_audio_text.txt');
 
-console.log(`🔌 正在连接 ASR 网关: ${SERVER_URL}`);
+console.log(`🔌 正在连接 ASR 网关: ${SERVER_URL} (Target Provider: ${TEST_PROVIDER})`);
 
 // 将音频文件（如 m4a, mp3, wav）转为 16kHz 16-bit 单声道 PCM Buffer
 function loadAudioAsPCM16k(filePath: string): Buffer {
@@ -50,7 +51,7 @@ ws.on('open', () => {
   // 1. 发送 start 指令
   const startMsg = {
     action: 'start',
-    provider: 'aliyun',
+    provider: TEST_PROVIDER,
     audio_format: {
       codec: 'pcm',
       sample_rate: 16000,

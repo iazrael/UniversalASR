@@ -1,8 +1,8 @@
 import dotenv from 'dotenv';
 import { z } from 'zod';
 
-// 加载 .env 环境变量
-dotenv.config();
+// 加载 .env 环境变量（允许 .env 覆盖系统已有环境变量）
+dotenv.config({ override: true });
 
 const envSchema = z.object({
   PORT: z.coerce.number().default(8080),
@@ -12,7 +12,7 @@ const envSchema = z.object({
   // 客户端接入鉴权 Token 列表（英文逗号隔开，* 代表不鉴权/开发模式）
   AUTH_TOKENS: z.string().default('default-client-token,test-token'),
 
-  // 默认 ASR 提供商
+  // 默认 ASR 提供商 (aliyun / omlx / qwen3-asr)
   DEFAULT_PROVIDER: z.string().default('aliyun'),
 
   // 阿里云 DashScope / Paraformer 配置
@@ -20,6 +20,11 @@ const envSchema = z.object({
   DASHSCOPE_WORKSPACE_ID: z.string().optional().default(''),
   DASHSCOPE_MODEL: z.string().default('paraformer-realtime-v2'),
   DASHSCOPE_WS_URL: z.string().default('wss://dashscope.aliyuncs.com/api-ws/v1/inference'),
+
+  // 本地 / 私有化 OMLX ASR 配置 (支持 Qwen3-ASR, Whisper, Voxtral 等)
+  OMLX_BASE_URL: z.string().default('https://omlx.com'),
+  OMLX_API_KEY: z.string().default(''),
+  OMLX_MODEL: z.string().default('Qwen3-ASR-1.7B-8bit'),
 
   // 会话空闲超时时间（毫秒，默认 60 秒无音频/交互则自动释放）
   SESSION_IDLE_TIMEOUT_MS: z.coerce.number().default(60000),

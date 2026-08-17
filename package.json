@@ -8,7 +8,9 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "test:client": "tsx test/mock-client.ts"
+    "test:client": "tsx test/mock-client.ts",
+    "test:omlx": "tsx test/test-omlx-e2e.ts",
+    "test:omlx:full": "tsx test/test-omlx-full-audio.ts"
   },
   "keywords": [
     "asr",

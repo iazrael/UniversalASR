@@ -2,13 +2,15 @@
 
 通用实时语音识别（ASR）网关服务，基于 Node.js / Fastify / TypeScript 构建。
 
-对外提供统一、标准的流式 WebSocket 接入协议，对内采用**适配器架构**无缝对接各主流云厂商 ASR 引擎。首发支持 **阿里云百炼（DashScope Paraformer-realtime-v2）**。
+对外提供统一、标准的流式 WebSocket 接入协议，对内采用**适配器架构**无缝对接各主流云厂商与私有化部署 ASR 引擎。支持：
+- **阿里云百炼**（DashScope Paraformer-realtime-v2）
+- **本地私有化 oMLX ASR**（Qwen3-ASR、Whisper、Voxtral 等，支持 SSE 增量流式转写与 WebSocket 实时双向流）
 
 ---
 
 ## 🌟 核心特性
 
-- **统一客户端协议**：抹平不同云厂商（阿里云、腾讯云、火山引擎、Whisper）的协议差异，业务客户端只需对接一套 WS 协议。
+- **统一客户端协议**：抹平不同厂商与本地大模型（阿里云 DashScope、oMLX Qwen3-ASR、Whisper）的协议差异，业务客户端只需对接一套 WS 协议。
 - **高性能 & 低延迟**：基于 Fastify + `@fastify/websocket`，全双工流式转发音频与实时转写结果。
 - **灵活鉴权**：支持基于 URL Query (`?token=xxx`)、HTTP Header (`Authorization: Bearer xxx`) 的 API Key 鉴权白名单机制。
 - **会话容错与管理**：自动处理握手缓冲区（避免首包丢失）、心跳保活、空闲超时自动清理与优雅停机。
@@ -32,7 +34,7 @@ npm install
 cp .env.example .env
 ```
 
-编辑 `.env`，填入你的阿里云百炼 API Key：
+编辑 `.env`，按需配置提供商（阿里云 DashScope 或 本地 oMLX）：
 
 ```env
 PORT=8080
@@ -41,13 +43,19 @@ HOST=0.0.0.0
 # 客户端接入 Token 白名单（英文逗号隔开，* 代表免鉴权开发模式）
 AUTH_TOKENS=default-client-token,test-token-123
 
-# 阿里云 DashScope 配置
-# 前往获取: https://bailian.console.aliyun.com/
+# 默认 ASR 引擎 (aliyun / omlx / qwen3-asr)
+DEFAULT_PROVIDER=omlx
+
+# 1. 阿里云 DashScope 配置
 DASHSCOPE_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-# 可选：百炼业务空间 ID（若配置将优先使用北京专属 MaaS 域名加速）
 DASHSCOPE_WORKSPACE_ID=
 DASHSCOPE_MODEL=paraformer-realtime-v2
 DASHSCOPE_WS_URL=wss://dashscope.aliyuncs.com/api-ws/v1/inference
+
+# 2. 本地私有化 oMLX ASR 配置 (Qwen3-ASR / Whisper 等)
+OMLX_BASE_URL=https://omlx.com
+OMLX_API_KEY=omlx-05yfs07frti3p4lz
+OMLX_MODEL=Qwen3-ASR-1.7B-8bit
 ```
 
 ### 3. 启动开发服务
