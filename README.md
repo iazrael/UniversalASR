@@ -58,11 +58,18 @@ OMLX_API_KEY=omlx-05yfs07frti3p4lz
 OMLX_MODEL=Qwen3-ASR-1.7B-8bit
 ```
 
-### 3. 启动开发服务
+### 3. 启动服务
 
 ```bash
+# 开发模式 (自动热重载)
 npm run dev
+
+# 生产模式
+npm run build
+npm start
 ```
+
+服务启动后，在浏览器直接访问 **`http://localhost:8080`** 即可打开 **Web 实时语音识别控制台**（支持 PC 与手机移动端竖屏录音测试）。
 
 服务启动后将监听：
 - **健康检查**：`GET http://localhost:8080/health`
