@@ -9,6 +9,7 @@
 2. **厂商解耦**：基于适配器模式，业务端无需关心具体 ASR 厂商协议细节，支持动态切换厂商。
 3. **安全鉴权**：提供 API Key / Token 校验机制，保障接口访问安全与用量可控。
 4. **低延迟与高并发**：流式全双工中继，最小化音频缓冲和转发时延。
+5. **成本防护**：通过 IP 限流、短时效 Ticket、单次识别截断、预算熔断等多层闸门，防止接口被脚本滥刷导致费用失控。
 
 ---
 
@@ -25,6 +26,13 @@ flowchart TD
     subgraph ASRGateway [Node.js ASR 统一网关服务]
         WSServer[WebSocket Ingress & 路由网关]
         AuthModule[鉴权与频控模块]
+
+        subgraph GuardLayer [成本防护层 src/guard/]
+            TicketSvc["TicketService<br/>短时效 Ticket 签发/校验"]
+            RateLimiter["RateLimiter<br/>IP 限流 (日额度 + 并发)"]
+            CircuitBreaker["CircuitBreaker<br/>预算熔断 (日/月用量)"]
+        end
+
         SessionMgr[Session 会话管理器]
         
         subgraph AdapterLayer [Provider 适配器抽象层]
@@ -42,9 +50,12 @@ flowchart TD
         VolcCloud[火山引擎 ASR]
     end
 
-    Client1 & Client2 & Client3 -- 1. WS 握手 (鉴权认证) --> WSServer
+    Client1 & Client2 & Client3 -- 1. 领 Ticket / WS 握手 --> WSServer
     WSServer --> AuthModule
-    WSServer --> SessionMgr
+    AuthModule --> TicketSvc
+    AuthModule --> RateLimiter
+    AuthModule --> CircuitBreaker
+    CircuitBreaker --> SessionMgr
     SessionMgr -- 2. 调度 ASR 实例 --> BaseAdapter
     BaseAdapter --> AliyunAdapter
     BaseAdapter -.-> TencentAdapter
@@ -52,6 +63,7 @@ flowchart TD
     BaseAdapter -.-> WhisperAdapter
     AliyunAdapter <== 3. 双向流式转发 ==> AliyunCloud
     SessionMgr <== 4. 实时转写流推回 ==> Client1 & Client2 & Client3
+    SessionMgr -- 5. 上报用量 --> CircuitBreaker
 ```
 
 ---
@@ -61,9 +73,24 @@ flowchart TD
 协议原则：**控制信令采用 JSON 格式，实时音频数据采用二进制帧（Binary Frame）传输**。
 
 ### 3.1 握手与鉴权
+
+服务端支持两种鉴权通道，客户端可按场景选择：
+
+**通道 A：静态 Token 直连**（调试 / 内部 / 控制台测试页）
 - **URL 查询参数**：`ws://<host>:<port>/v1/asr?token=<YOUR_API_KEY>`
 - **HTTP Header**：`Authorization: Bearer <YOUR_API_KEY>`
 - **首包 JSON 鉴权**（兼容无法配置 Header 的客户端环境）。
+
+**通道 B：短时效 Ticket**（生产前端，推荐）
+1. 先通过 HTTP 接口领取一次性 Ticket：
+   ```
+   POST /v1/ticket
+   Headers: Authorization: Bearer <YOUR_API_KEY>
+   Response: { "ticket": "<32字符随机串>", "expiresIn": 60 }
+   ```
+2. 用 Ticket 建立 WebSocket 连接：`ws://<host>:<port>/v1/asr?ticket=<TICKET>`
+
+Ticket 通道的请求链路经过完整的成本防护闸门（IP 限流 → 熔断检查 → Ticket 校验），适用于公开 H5 等需要防滥用的场景。静态 Token 通道绕过限流，适用于受信环境。
 
 ### 3.2 客户端 -> 服务端（C2S）指令
 
@@ -252,21 +279,30 @@ asr-service/
 ├── src/
 │   ├── config/               # 环境变量与应用配置 (dotenv / zod)
 │   ├── auth/                 # 鉴权中间件 (API Key / Token 校验)
+│   │   └── auth.service.ts
+│   ├── guard/                # 成本防护层（限流 / 熔断 / Ticket）
+│   │   ├── rate-limiter.ts   # IP 维度限流器（日额度 + 并发控制）
+│   │   ├── circuit-breaker.ts # 预算熔断器（日/月用量统计 + 文件持久化）
+│   │   └── ticket.service.ts # 短时效 Ticket 签发与校验
 │   ├── core/                 # 核心网关与调度
-│   │   ├── session.ts        # 会话与流中继管理
-│   │   ├── protocol.ts       # 协议类型定义与编解码
-│   │   └── errors.ts         # 统一错误码与异常
+│   │   ├── session.ts        # 会话与流中继管理（含 utterance 级截断）
+│   │   └── vad.ts            # 轻量级 VAD 切句引擎
 │   ├── providers/            # 厂商适配器目录
 │   │   ├── base.provider.ts  # Provider 抽象基类
 │   │   ├── factory.ts        # 厂商工厂类
-│   │   └── aliyun/           # 阿里云 ASR 实现
-│   │       ├── aliyun-nls.provider.ts
-│   │       └── token-manager.ts
+│   │   ├── aliyun/           # 阿里云 DashScope Paraformer 实现
+│   │   └── omlx/             # 本地/私有化 oMLX 适配器 (Qwen3-ASR 等)
+│   ├── client/               # 跨平台 Web 客户端 SDK
+│   │   └── universal-client.ts
 │   ├── types/                # 全局 TypeScript 类型定义
+│   │   └── protocol.ts       # 通信协议与错误码
 │   └── server.ts             # 服务启动入口
+├── public/                   # Web 控制台前端（录音测试页）
 ├── test/
 │   ├── mock-client.ts        # 模拟客户端推流测试脚本
 │   └── fixtures/             # 测试音频样例 (16k 16bit pcm/wav)
+├── data/                     # 运行时数据（.gitignore，自动生成）
+│   └── usage.json            # 预算熔断器用量持久化
 ├── .env.example
 ├── package.json
 └── tsconfig.json
@@ -274,11 +310,64 @@ asr-service/
 
 ---
 
-## 6. 技术选型总结
+## 6. 成本防护体系
+
+### 6.1 设计原则
+
+- **防脚本滥刷，不防真实用户**：配额阈值宽松（默认值约为预估真实用量的 5 倍余量）
+- **分层递进**：Ticket 闸门 → IP 限流 → 单次截断 → 预算熔断，层层设防
+- **降级优先于拒绝**：超限时前端应降级到浏览器 ASR / 打字，而非直接报错
+- **零外部依赖**：纯内存 Map + 文件持久化，无需 Redis 或数据库
+
+### 6.2 请求链路
+
+```
+客户端
+  │
+  ├─ POST /v1/ticket (带 API Key)
+  │     → AuthService 校验 Key
+  │     → CircuitBreaker 熔断检查
+  │     → RateLimiter IP 日额度检查
+  │     → 签发 Ticket (60s 有效、单次使用)
+  │
+  └─ WS /v1/asr?ticket=xxx
+        → TicketService 校验 (过期/已用则拒绝)
+        → CircuitBreaker 熔断检查
+        → RateLimiter IP 日额度递增 + 并发检查
+        → 放行 → ASRSession
+        → utterance 级 30s 硬截断
+        → completed 时上报用量 → CircuitBreaker 计数
+```
+
+### 6.3 防护参数
+
+| 环境变量 | 默认值 | 说明 |
+| :--- | :--- | :--- |
+| `UTTERANCE_MAX_DURATION_MS` | `30000` | 单次识别最大时长（ms） |
+| `RATE_LIMIT_DAILY_PER_IP` | `200` | 每 IP 每日最大识别次数 |
+| `RATE_LIMIT_MAX_CONCURRENT_PER_IP` | `3` | 每 IP 最大并发连接数 |
+| `BUDGET_DAILY_MAX_COUNT` | `5000` | 每日最大识别次数（熔断阈值） |
+| `BUDGET_DAILY_MAX_DURATION_MS` | `18000000` | 每日最大累计识别时长（5 小时） |
+| `BUDGET_MONTHLY_MAX_COUNT` | `100000` | 每月最大识别次数 |
+| `BUDGET_WARN_THRESHOLD` | `0.8` | 用量告警比例 |
+| `TICKET_TTL_MS` | `60000` | Ticket 有效期（ms） |
+| `TICKET_BIND_IP` | `false` | 是否绑定签发 IP |
+
+### 6.4 错误码
+
+| 错误码 | 名称 | 触发条件 | 前端预期行为 |
+| :--- | :--- | :--- | :--- |
+| `4008` | `RATE_LIMITED` | IP 日额度耗尽或并发超限 | 降级到浏览器 ASR / 打字 |
+| `4009` | `SERVICE_SUSPENDED` | 预算熔断器触发 | 降级到浏览器 ASR / 打字 |
+
+---
+
+## 7. 技术选型总结
 
 | 层次 | 选型 | 优势 |
 | :--- | :--- | :--- |
 | **开发语言** | TypeScript (Node.js 20+) | 强类型契约，多厂商协议转换可靠安全 |
 | **HTTP / WS 框架**| Fastify + `@fastify/websocket` | 极致性能、低开销、生态良好 |
 | **鉴权存储** | 内存 Map / Redis (可选) | 支持静态 Key 与分布式动态 Token 校验 |
+| **成本防护** | 内存 Map + 文件持久化 | 零外部依赖，适合单实例部署 |
 | **日志组件** | Pino | 高性能结构化 JSON 异步日志 |

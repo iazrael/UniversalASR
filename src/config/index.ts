@@ -30,6 +30,32 @@ const envSchema = z.object({
   SESSION_IDLE_TIMEOUT_MS: z.coerce.number().default(60000),
   // 最大会话持续时长（毫秒，默认 30 分钟）
   SESSION_MAX_DURATION_MS: z.coerce.number().default(1800000),
+
+  // ── 成本防护配置 ──────────────────────────────────────────
+
+  // 单次识别最大时长（毫秒，默认 30 秒，防止单次调用计费过高）
+  UTTERANCE_MAX_DURATION_MS: z.coerce.number().default(30000),
+
+  // IP 限流：每 IP 每日最大识别次数（学校/家庭共享出口 IP，默认放宽到 200）
+  RATE_LIMIT_DAILY_PER_IP: z.coerce.number().default(200),
+  // IP 限流：每 IP 最大并发 WebSocket 连接数
+  RATE_LIMIT_MAX_CONCURRENT_PER_IP: z.coerce.number().default(3),
+
+  // 预算熔断：每日最大识别次数
+  BUDGET_DAILY_MAX_COUNT: z.coerce.number().default(5000),
+  // 预算熔断：每日最大累计识别时长（毫秒，默认 5 小时）
+  BUDGET_DAILY_MAX_DURATION_MS: z.coerce.number().default(18000000),
+  // 预算熔断：每月最大识别次数
+  BUDGET_MONTHLY_MAX_COUNT: z.coerce.number().default(100000),
+  // 预算熔断：用量告警阈值（0~1，达到此比例时输出警告日志）
+  BUDGET_WARN_THRESHOLD: z.coerce.number().default(0.8),
+  // 预算熔断：持久化文件路径
+  BUDGET_PERSIST_PATH: z.string().default('data/usage.json'),
+
+  // Ticket：有效期（毫秒，默认 60 秒）
+  TICKET_TTL_MS: z.coerce.number().default(60000),
+  // Ticket：是否绑定签发时的 IP（开启后换 IP 不可用，学校网络可能有问题）
+  TICKET_BIND_IP: z.enum(['true', 'false']).default('false').transform(v => v === 'true'),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);

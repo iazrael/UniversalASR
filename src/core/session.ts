@@ -22,6 +22,10 @@ export class ASRSession {
   private provider: BaseASRProvider | null = null;
   private idleTimer: NodeJS.Timeout | null = null;
   private maxDurationTimer: NodeJS.Timeout | null = null;
+  private utteranceTimer: NodeJS.Timeout | null = null;
+
+  /** 外部注入的用量上报回调（由 server.ts 注入，用于预算熔断器计数） */
+  public onUsageReport: ((durationMs: number) => void) | null = null;
 
   constructor(ws: WebSocket, logger: FastifyBaseLogger, customSessionId?: string) {
     this.id = customSessionId || uuidv4();
@@ -129,6 +133,16 @@ export class ASRSession {
           session_id: this.id,
           provider: this.provider?.name || 'unknown',
         });
+
+        // 启动单次识别硬截断定时器
+        this.clearUtteranceTimer();
+        this.utteranceTimer = setTimeout(() => {
+          this.logger.warn(
+            { maxMs: config.UTTERANCE_MAX_DURATION_MS },
+            '单次识别达到最大时长限制，强制停止'
+          );
+          this.handleStop();
+        }, config.UTTERANCE_MAX_DURATION_MS);
       });
 
       this.provider.on('transcript', (result) => {
@@ -141,17 +155,23 @@ export class ASRSession {
 
       this.provider.on('completed', (payload) => {
         this.logger.info({ usage: payload }, 'ASR 转写完成');
+        this.clearUtteranceTimer();
         this.sendMessage({
           event: 'completed',
           session_id: this.id,
           usage: payload.durationMs ? { duration_ms: payload.durationMs } : undefined,
         });
+        // 上报用量给预算熔断器
+        if (this.onUsageReport) {
+          this.onUsageReport(payload.durationMs || 0);
+        }
         this.state = 'INITIAL';
         this.cleanupProvider();
       });
 
       this.provider.on('error', (err) => {
         this.logger.error({ err }, 'ASR Provider 报错');
+        this.clearUtteranceTimer();
         this.sendError(ASRErrorCode.VENDOR_ERROR, err.message);
         this.cleanupProvider();
         this.state = 'INITIAL';
@@ -252,6 +272,16 @@ export class ASRSession {
   }
 
   /**
+   * 清理单次识别截断定时器
+   */
+  private clearUtteranceTimer(): void {
+    if (this.utteranceTimer) {
+      clearTimeout(this.utteranceTimer);
+      this.utteranceTimer = null;
+    }
+  }
+
+  /**
    * 销毁会话与彻底清理
    */
   public destroy(): void {
@@ -268,6 +298,7 @@ export class ASRSession {
       this.maxDurationTimer = null;
     }
 
+    this.clearUtteranceTimer();
     this.cleanupProvider();
 
     if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) {

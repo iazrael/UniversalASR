@@ -10,6 +10,9 @@ dist/
 .env.*.local
 !.env.example
 
+# Runtime data (budget usage persistence etc.)
+data/
+
 # Logs
 logs
 *.log
