@@ -92,6 +92,8 @@ flowchart TD
 
 Ticket 通道的请求链路经过完整的成本防护闸门（IP 限流 → 熔断检查 → Ticket 校验），适用于公开 H5 等需要防滥用的场景。静态 Token 通道绕过限流，适用于受信环境。
 
+**UniversalClient SDK（`src/client/universal-client.ts` / `public/universal-client.js`）默认即走 Ticket 通道**（`auth: 'ticket'`，可省略）：SDK 在麦克风授权完成后自动凭 `options.token`（API Key，走 `Authorization` 请求头，不进 URL）调用 `POST /v1/ticket` 领票，再用 `?ticket=` 握手。领票刻意安排在麦克风权限弹窗之后，避免用户在弹窗上的耗时耗尽 Ticket 的 60s 有效期。外部已预领票时可直接传 `options.ticket` 跳过领票；受信/调试环境可显式指定 `auth: 'token'` 回退静态 Token 直连。
+
 ### 3.2 客户端 -> 服务端（C2S）指令
 
 #### (1) 启动识别会话 (`start`)

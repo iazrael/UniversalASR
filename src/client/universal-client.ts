@@ -9,9 +9,17 @@ import {
 
 export type ClientState = 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED' | 'RECORDING' | 'STOPPING';
 
+/** 鉴权方式：ticket（默认）= 先领一次性短时效 Ticket 再握手；token = 静态 Token 直连 */
+export type ClientAuthMode = 'ticket' | 'token';
+
 export interface ClientStartOptions {
   serverUrl?: string;
+  /** 鉴权方式，默认 'ticket'（先 POST /v1/ticket 领票，再 ?ticket= 握手） */
+  auth?: ClientAuthMode;
+  /** API Key：ticket 模式下用于领取 Ticket；token 模式下直接用于 WS 握手 */
   token?: string;
+  /** 已签发的一次性 Ticket，传入后跳过领票步骤直接握手 */
+  ticket?: string;
   provider?: string;
   language?: string;
   maxSentenceSilence?: number;
@@ -106,25 +114,25 @@ export class UniversalClient {
 
     this.setState('CONNECTING');
 
-    const token = options.token || 'default-client-token';
     const defaultWsUrl =
       typeof window !== 'undefined'
         ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/v1/asr`
         : 'ws://127.0.0.1:8080/v1/asr';
 
     const baseWsUrl = options.serverUrl || defaultWsUrl;
-    const wsUrl = baseWsUrl.includes('?')
-      ? `${baseWsUrl}&token=${encodeURIComponent(token)}`
-      : `${baseWsUrl}?token=${encodeURIComponent(token)}`;
 
     try {
-      // 1. 初始化并请求浏览器麦克风权限
+      // 1. 初始化并请求浏览器麦克风权限（可能阻塞等待用户确认，须在领票之前完成，
+      //    避免 Ticket 60s 有效期在权限弹窗期间耗尽）
       await this.initMicrophone();
 
-      // 2. 连接 WebSocket
+      // 2. 鉴权：默认走 Ticket 通道（一次性短时效 Ticket，避免长期 API Key 暴露在 WS URL 中）
+      const wsUrl = await this.buildAuthedWsUrl(baseWsUrl, options);
+
+      // 3. 连接 WebSocket
       await this.connectWebSocket(wsUrl);
 
-      // 3. 发送 start 控制指令
+      // 4. 发送 start 控制指令
       const provider = options.provider || 'omlx';
       const startMsg: C2SStartMessage = {
         action: 'start',
@@ -174,6 +182,66 @@ export class UniversalClient {
       this.sendWsJson(stopMsg);
     } else {
       this.destroy();
+    }
+  }
+
+  /**
+   * 根据鉴权方式构造带凭证的 WS 握手 URL
+   * - ticket 模式（默认）：先 POST /v1/ticket 领一次性 Ticket，再拼 ?ticket=
+   * - token 模式：直接拼 ?token=（静态直连，适用于受信/调试环境）
+   */
+  private async buildAuthedWsUrl(baseWsUrl: string, options: ClientStartOptions): Promise<string> {
+    let credential: string;
+
+    if (options.ticket) {
+      // 外部已领票（如页面加载时预领），直接使用
+      credential = `ticket=${encodeURIComponent(options.ticket)}`;
+    } else if ((options.auth ?? 'ticket') === 'ticket') {
+      const token = options.token || 'default-client-token';
+      const { ticket } = await this.fetchTicket(baseWsUrl, token);
+      credential = `ticket=${encodeURIComponent(ticket)}`;
+    } else {
+      const token = options.token || 'default-client-token';
+      credential = `token=${encodeURIComponent(token)}`;
+    }
+
+    return baseWsUrl.includes('?') ? `${baseWsUrl}&${credential}` : `${baseWsUrl}?${credential}`;
+  }
+
+  /**
+   * 调用 POST /v1/ticket 领取一次性短时效 Ticket（API Key 走 Authorization 头，不进 URL）
+   */
+  private async fetchTicket(
+    baseWsUrl: string,
+    token: string
+  ): Promise<{ ticket: string; expiresIn: number }> {
+    const res = await fetch(`${this.resolveHttpBaseUrl(baseWsUrl)}/v1/ticket`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      throw new Error(
+        data?.message ||
+          `Ticket 签发失败 (HTTP ${res.status})，请检查 API Key 是否有效；旧版本服务可用 auth: 'token' 直连`
+      );
+    }
+    if (!data?.ticket) {
+      throw new Error('Ticket 签发响应格式异常：缺少 ticket 字段');
+    }
+    return data;
+  }
+
+  /**
+   * 从 WS 端点地址推导 Ticket 签发的 HTTP 基础地址（ws→http / wss→https，取 origin）
+   */
+  private resolveHttpBaseUrl(baseWsUrl: string): string {
+    const httpUrl = baseWsUrl.replace(/^ws/, 'http'); // ws://→http://, wss://→https://
+    try {
+      return new URL(httpUrl).origin;
+    } catch {
+      return httpUrl.replace(/\/v1\/asr.*$/, '').replace(/\/+$/, '');
     }
   }
 

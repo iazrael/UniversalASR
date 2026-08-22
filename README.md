@@ -12,7 +12,7 @@
 
 - **统一客户端协议**：抹平不同厂商与本地大模型（阿里云 DashScope、oMLX Qwen3-ASR、Whisper）的协议差异，业务客户端只需对接一套 WS 协议。
 - **高性能 & 低延迟**：基于 Fastify + `@fastify/websocket`，全双工流式转发音频与实时转写结果。
-- **灵活鉴权**：支持基于 URL Query (`?token=xxx`)、HTTP Header (`Authorization: Bearer xxx`) 的 API Key 鉴权白名单机制。
+- **灵活鉴权**：双通道鉴权——**短时效一次性 Ticket**（默认推荐：先 `POST /v1/ticket` 领票再用 `?ticket=xxx` 握手，长期 API Key 不暴露在 WS URL 中）+ 静态 API Key 直连（`?token=xxx` / `Authorization: Bearer xxx`，调试与受信环境）。
 - **会话容错与管理**：自动处理握手缓冲区（避免首包丢失）、心跳保活、空闲超时自动清理与优雅停机。
 - **开箱即用**：自带模拟推流测试脚本，支持合成音或直接加载本地 wav/pcm 音频文件进行推流测试。
 
@@ -73,7 +73,8 @@ npm start
 
 服务启动后将监听：
 - **健康检查**：`GET http://localhost:8080/health`
-- **实时 ASR WebSocket**：`ws://localhost:8080/v1/asr?token=default-client-token`
+- **Ticket 签发**：`POST http://localhost:8080/v1/ticket`（Header 携带 `Authorization: Bearer <API_KEY>`，返回 60 秒有效的一次性 Ticket）
+- **实时 ASR WebSocket**：`ws://localhost:8080/v1/asr?ticket=<TICKET>`（推荐）或 `?token=default-client-token`（调试直连）
 
 ---
 
@@ -93,11 +94,53 @@ npm run test:client -- ./path/to/test.wav
 
 ## 📖 客户端 WebSocket 交互协议
 
-### 1. 握手连接
+### 1. 握手连接（鉴权）
+
+**通道 A：短时效 Ticket（推荐，生产前端默认）**
+
+先凭 API Key 领取一次性 Ticket（60 秒有效、单次使用，长期 Key 只出现在 HTTPS 请求头中）：
+
+```bash
+curl -X POST http://<server_host>:<port>/v1/ticket \
+  -H "Authorization: Bearer <YOUR_API_KEY>"
+# → { "ticket": "<32字符随机串>", "expiresIn": 60 }
+```
+
+再用 Ticket 建立 WebSocket 连接：
+
+```text
+ws://<server_host>:<port>/v1/asr?ticket=<TICKET>
+```
+
+Ticket 通道的请求链路经过完整的成本防护闸门（IP 限流 → 熔断检查 → Ticket 校验）。
+
+**通道 B：静态 API Key 直连（调试 / 受信环境）**
+
 ```text
 ws://<server_host>:<port>/v1/asr?token=<YOUR_TOKEN>
 ```
-*也可以在 WebSocket 握手时通过 Header `Authorization: Bearer <YOUR_TOKEN>` 传递。*
+*也可以在 WebSocket 握手时通过 Header `Authorization: Bearer <YOUR_TOKEN>` 传递。静态 Token 通道绕过限流，适用于内部环境。*
+
+**浏览器 SDK（UniversalClient）默认即走 Ticket 通道：**
+
+```html
+<script type="module">
+  import { UniversalClient } from '/universal-client.js';
+
+  const client = new UniversalClient();
+  client.on('transcript', (r) => console.log(r.text, r.is_final));
+
+  // 默认 auth:'ticket' —— SDK 自动先 POST /v1/ticket 领票（token 走 Authorization 头），
+  // 再用 ?ticket= 握手；领票发生在麦克风授权之后，避免 Ticket 在权限弹窗期间过期
+  await client.start({ token: '<YOUR_API_KEY>', provider: 'omlx', language: 'zh' });
+
+  // 已在外部预领 Ticket 时可直接传入，跳过领票步骤
+  // await client.start({ ticket: '<PRE_FETCHED_TICKET>', ... });
+
+  // 调试/受信环境可显式回退静态 Token 直连
+  // await client.start({ auth: 'token', token: '<YOUR_API_KEY>', ... });
+</script>
+```
 
 ### 2. 启动识别 (`start`)
 连接建立后，客户端先发送一条 JSON 格式的 `start` 帧：
