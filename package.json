@@ -6,7 +6,7 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc",
+    "build": "tsc && tsc -p tsconfig.client.json",
     "start": "node dist/server.js",
     "test:client": "tsx test/mock-client.ts",
     "test:omlx": "tsx test/test-omlx-e2e.ts",

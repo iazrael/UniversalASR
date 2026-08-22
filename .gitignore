@@ -43,3 +43,8 @@ coverage/
 test/fixtures/*.pcm
 test/fixtures/*.wav
 !test/fixtures/.gitkeep
+# 浏览器版 SDK：由 src/client/universal-client.ts 编译产出（npm run build），不入库
+public/universal-client.js
+
+# 本地敏感信息（真实服务器地址等），不入库
+docs/*.local.md

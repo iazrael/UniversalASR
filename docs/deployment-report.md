@@ -1,6 +1,10 @@
-# 生产部署报告 — <SERVER_HOST>
+# 生产部署报告
 
-> 部署日期：2026-08-22 ｜ 部署人：Azrael（ZCode 辅助）｜ 服务版本：commit `c4e2192`
+> 部署日期：2026-08-22 ｜ 部署人：Azrael（ZCode 辅助）
+>
+> ⚠️ 出于安全考虑，真实服务器 IP 不入库：本文与接入指南中的 `<SERVER_HOST>` 占位符
+> 对应的实际地址、API Key 记录在**本地未入库文件** `docs/production-endpoint.local.md`
+> （已 gitignore，向管理员索取）。
 
 ## 1. 部署概览
 

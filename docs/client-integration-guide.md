@@ -1,6 +1,7 @@
 # 客户端接入指南 — 飞花令等项目如何使用 ASR 服务
 
-> 面向接入方开发者。服务地址 `https://<SERVER_HOST>`，API Key 向服务管理员索取。
+> 面向接入方开发者。文中 `<SERVER_HOST>` 为服务器地址占位符（真实 IP 不入库），
+> 实际地址与 API Key 向服务管理员索取。
 > 服务端架构与运维见 [deployment-report.md](./deployment-report.md)。
 
 ## 0. 一分钟了解鉴权模型
