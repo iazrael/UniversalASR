@@ -1,6 +1,9 @@
 /**
- * Universal ASR 客户端 SDK (浏览器原生版)
+ * Universal ASR 客户端 SDK (浏览器原生 ES Module 版，供 script 标签直接引入)
  * 支持麦克风音频采集、实时 16kHz 下采样、PCM 封装、WebSocket 流式推流与事件派发
+ *
+ * 与 src/client/universal-client.ts 功能保持一致（TS 版为零依赖单文件，
+ * 可直接复制进项目）；修改鉴权/音频逻辑时两处需同步。
  */
 export class UniversalClient {
   constructor() {
@@ -301,7 +304,7 @@ export class UniversalClient {
         sum += dataArray[i];
       }
       const avg = sum / dataArray.length;
-      const normalized = Math.min(1.0, avg / 100.0);
+      const normalized = Math.min(1.0, avg / 128.0);
       this.emit('volume', normalized);
 
       this.animFrameId = requestAnimationFrame(monitor);
@@ -407,6 +410,9 @@ export class UniversalClient {
           message: msg.message,
         });
         this.destroy();
+        break;
+
+      case 'pong':
         break;
     }
   }

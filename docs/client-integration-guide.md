@@ -20,43 +20,49 @@
 
 ## 1. 浏览器 / H5 接入（推荐，直接用官方 SDK）
 
-SDK 地址（服务自带，无需安装依赖）：`https://<SERVER_HOST>/universal-client.js`
+两种引入方式，按项目形态选其一：
 
-```html
-<script type="module">
-  import { UniversalClient } from 'https://<SERVER_HOST>/universal-client.js';
+- **TS / 有构建流程的项目（推荐）**：直接复制仓库的 [`src/client/universal-client.ts`](../src/client/universal-client.ts) 到你的项目里。该文件是**零依赖单文件**（协议类型已内联并导出），复制即可通过 strict 编译，无需安装任何包。
+- **无构建的纯 HTML 页面**：script 标签直接引入服务自带的 JS 版（与 TS 版功能一致）：
+  `https://<SERVER_HOST>/universal-client.js`
 
-  const client = new UniversalClient();
+```ts
+// TS 项目：复制 universal-client.ts 进项目后按相对路径引入，例如：
+//   import { UniversalClient } from '@/lib/universal-client';
+// 纯 HTML 页面则在 <script type="module"> 中引入远程地址：
+//   import { UniversalClient } from 'https://<SERVER_HOST>/universal-client.js';
+import { UniversalClient } from '@/lib/universal-client';
 
-  // 状态机：DISCONNECTED → CONNECTING → RECORDING → STOPPING → DISCONNECTED
-  client.on('stateChange', (s) => console.log('状态:', s));
+const client = new UniversalClient();
 
-  // 实时转写：边说边出中间结果，停顿自动切句定稿
-  client.on('transcript', (r) => {
-    // r = { text, is_final, sentence_id }
-    if (r.is_final) {
-      console.log('一句定稿:', r.text);      // ← 飞花令在这里校验答案
-    } else {
-      console.log('识别中…:', r.text);
-    }
-  });
+// 状态机：DISCONNECTED → CONNECTING → RECORDING → STOPPING → DISCONNECTED
+client.on('stateChange', (s) => console.log('状态:', s));
 
-  client.on('error', (err) => console.error('错误码:', err.code, err.message));
-  client.on('completed', (d) => console.log('本次识别时长:', d.durationMs));
+// 实时转写：边说边出中间结果，停顿自动切句定稿
+client.on('transcript', (r) => {
+  // r = { text, is_final, sentence_id }
+  if (r.is_final) {
+    console.log('一句定稿:', r.text);      // ← 飞花令在这里校验答案
+  } else {
+    console.log('识别中…:', r.text);
+  }
+});
 
-  // 开始：默认自动走 Ticket 鉴权（领票 → 握手，无需自己调 /v1/ticket）
-  await client.start({
-    serverUrl: 'wss://<SERVER_HOST>/v1/asr',  // 跨域接入必填；同域部署可省略
-    token: '<你的API_KEY>',                    // 用于领票，走 Authorization 头
-    provider: 'omlx',                          // 'omlx'(Qwen3-ASR) | 'aliyun'(Paraformer)
-    language: 'zh',
-    maxSentenceSilence: 400,                   // 停顿 400ms 即切句定稿（对战节奏推荐值）
-    enableVad: true,
-  });
+client.on('error', (err) => console.error('错误码:', err.code, err.message));
+client.on('completed', (d) => console.log('本次识别时长:', d.durationMs));
 
-  // 说完这一轮，主动结束并等待 completed
-  await client.stop();
-</script>
+// 开始：默认自动走 Ticket 鉴权（领票 → 握手，无需自己调 /v1/ticket）
+await client.start({
+  serverUrl: 'wss://<SERVER_HOST>/v1/asr',  // 跨域接入必填；同域部署可省略
+  token: '<你的API_KEY>',                    // 用于领票，走 Authorization 头
+  provider: 'omlx',                          // 'omlx'(Qwen3-ASR) | 'aliyun'(Paraformer)
+  language: 'zh',
+  maxSentenceSilence: 400,                   // 停顿 400ms 即切句定稿（对战节奏推荐值）
+  enableVad: true,
+});
+
+// 说完这一轮，主动结束并等待 completed
+await client.stop();
 ```
 
 **注意事项**

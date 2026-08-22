@@ -1,11 +1,100 @@
-import {
-  AudioFormat,
-  ASROptions,
-  C2SStartMessage,
-  C2SStopMessage,
-  S2CMessage,
-  TranscriptResultPayload,
-} from '../types/protocol.js';
+/**
+ * Universal ASR 跨平台客户端 SDK (支持浏览器麦克风录音与 WebSocket 实时流式传输)
+ *
+ * 本文件为零依赖单文件分发设计：所需协议类型已内联，可直接复制到任意
+ * TS/Web 项目中使用（需 DOM lib）。协议的权威定义在 src/types/protocol.ts，
+ * 修改协议时两处需保持同步。
+ */
+
+// ── 内联协议类型（与 src/types/protocol.ts 保持同步）──────────
+
+export type AudioCodec = 'pcm' | 'wav' | 'opus' | 'aac';
+
+export interface AudioFormat {
+  codec: AudioCodec;
+  sample_rate: number;
+  channels?: number;
+  bit_depth?: number;
+}
+
+export interface ASROptions {
+  language?: string;
+  intermediate_results?: boolean;
+  punctuation?: boolean;
+  disfluency_removal?: boolean;
+  semantic_punctuation?: boolean;
+  max_sentence_silence?: number;
+  multi_threshold_mode?: boolean;
+  inverse_text_normalization?: boolean;
+  vocabulary_id?: string;
+  custom_params?: Record<string, any>;
+}
+
+export interface C2SStartMessage {
+  action: 'start';
+  session_id?: string;
+  provider?: string;
+  audio_format?: Partial<AudioFormat>;
+  options?: ASROptions;
+}
+
+export interface C2SStopMessage {
+  action: 'stop';
+}
+
+export interface WordTimestamp {
+  text: string;
+  begin_time: number;
+  end_time: number;
+  punctuation?: string;
+}
+
+export interface TranscriptResultPayload {
+  text: string;
+  is_final: boolean;
+  sentence_id?: number;
+  begin_time?: number;
+  end_time?: number | null;
+  words?: WordTimestamp[];
+  emo_tag?: string;
+  emo_confidence?: number;
+}
+
+export interface S2CStartedMessage {
+  event: 'started';
+  session_id: string;
+  provider: string;
+}
+
+export interface S2CTranscriptionMessage {
+  event: 'transcription';
+  session_id: string;
+  result: TranscriptResultPayload;
+}
+
+export interface S2CCompletedMessage {
+  event: 'completed';
+  session_id: string;
+  usage?: { duration_ms?: number };
+}
+
+export interface S2CErrorMessage {
+  event: 'error';
+  session_id?: string;
+  code: number;
+  message: string;
+}
+
+export interface S2CPongMessage {
+  event: 'pong';
+}
+
+export type S2CMessage =
+  | S2CStartedMessage
+  | S2CTranscriptionMessage
+  | S2CCompletedMessage
+  | S2CErrorMessage
+  | S2CPongMessage;
 
 export type ClientState = 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED' | 'RECORDING' | 'STOPPING';
 
@@ -37,9 +126,6 @@ export type EventCallbackMap = {
   volume: (level: number) => void; // 0.0 ~ 1.0 音量大小
 };
 
-/**
- * Universal ASR 跨平台客户端 SDK (支持浏览器麦克风录音与 WebSocket 实时流式传输)
- */
 export class UniversalClient {
   private ws: WebSocket | null = null;
   private state: ClientState = 'DISCONNECTED';
