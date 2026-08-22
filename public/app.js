@@ -24,6 +24,14 @@ const btnClear = document.getElementById('btn-clear');
 const btnCopyAll = document.getElementById('btn-copy-all');
 const btnTestDemo = document.getElementById('btn-test-demo');
 const toastMsg = document.getElementById('toast-msg');
+const apiKeyInput = document.getElementById('api-key-input');
+
+// API Key（生产环境用于领取 Ticket，保存在本机浏览器 localStorage）
+apiKeyInput.value = localStorage.getItem('asr_api_key') || '';
+apiKeyInput.addEventListener('change', () => {
+  localStorage.setItem('asr_api_key', apiKeyInput.value.trim());
+  showToast(apiKeyInput.value.trim() ? 'API Key 已保存到本机' : 'API Key 已清除');
+});
 
 // Provider 切换选项
 const providerOptions = document.querySelectorAll('.segmented-option');
@@ -260,8 +268,17 @@ recordBtn.addEventListener('click', async () => {
     // 启动录音
     const maxSilence = parseInt(silenceSlider.value, 10);
     const language = langSelect.value;
+    const apiKey = apiKeyInput.value.trim() || localStorage.getItem('asr_api_key') || '';
+
+    if (!apiKey) {
+      showToast('请先在 ⚙️ 设置中填写 API Key');
+      settingsPanel.classList.remove('collapsed');
+      apiKeyInput.focus();
+      return;
+    }
 
     await client.start({
+      token: apiKey,
       provider: currentProvider,
       language,
       maxSentenceSilence: maxSilence,
